@@ -1,0 +1,454 @@
+---
+title: "ESM 204 HW 2 Solution Key"
+author: "Nathaniel Grimes"
+date: "2023-04-20"
+output: 
+  html_document:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message=FALSE,warning=FALSE)
+library(tidyverse)
+library(cowplot)
+library(here)
+library(broom)
+library(knitr)
+```
+
+In this homework you will be simulating alternative approaches for reducing carbon emissions among four UC campuses (UCSB, UCLA, UCI, and UCD). The dataset for this assignment is available in the file “CarbonUC.csv”, available on Canvas. The dataset contains estimates of the marginal cost of reducing carbon emission for each campus for different levels of abatement (in tons of carbon). A few notes:
+
+● Current (i.e. baseline) emission for each campus are: UCSB = 90,000 tons, UCLA = 250,000 tons, UCI =
+100,000 tons, UCD = 160,000 tons.
+
+● Prices are in $/ton and quantities are in tons of CO2.
+
+● Before opening R, I recommend drawing graphs by hand to make sure you know what you want to do
+
+## Question 1
+
+For each campus, plot the marginal abatement cost data and estimate a linear regression model with
+zero intercept.^[I recommend using the function “lm” (as in “linear model”) in R.] These estimated linear regressions will be your estimates of the marginal abatement cost curve for each campus, which you will use for the remainder of this analysis. Write the equation for the marginal abatement cost curve for each campus.
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> 
+For each question I will show the tidy way to do it and a straightforward way. Both data practices arrive at the same answer. Use whichever is easier for you. Make sure to understand the economics and why we're doing certain steps than the exact data science method. As always tidy is less hardcoded and more flexible so we could expand more easily if we got a larger or different dataset. By default the tidy chunks are shown. The straightforward chunks are hidden to start, but feel free to look at them as well by selecting the folding options to the side. </span>
+
+```{r}
+# Load in data
+
+carbon_df<-read_csv(here("CarbonUC.csv"))
+
+# rearrange into tidy format
+
+tidy_df<-carbon_df %>% 
+  janitor::clean_names() %>% 
+  pivot_longer(!abatement,names_to="campus",values_to = "mc")
+```
+
+
+<span style="color: blue;"> With the tidy format, it's really easy to plot all the campuses abatement costs. We will run regressions in the next step, but I'm going to take advantage of `geom_smooth()` ability to plot regression lines in one step. </span>
+
+```{r}
+ggplot(tidy_df,aes(x=abatement,y=mc))+
+  geom_point(aes(color=campus))+
+  geom_smooth(aes(group=campus),formula=y~0+x,se=FALSE,color="black")+
+  viridis::scale_color_viridis(discrete = TRUE, option = "D")+
+  theme_classic()
+```
+
+
+<span style="color: blue;"> Run regressions on the carbon dataframe for each campus. Extract out the coefficients of the regressions. </span>
+
+```{r}
+# Tidy way
+
+models<-tidy_df %>% 
+  group_by(campus) %>% 
+  nest() %>% 
+  mutate(reg=map(.x=data,~lm(mc~abatement+0,data=.x))) %>%   #0 in lm to eliminate intercept term
+  mutate(coeff=map_dbl(reg,coefficients)) %>% 
+  select(-c(data,reg))  #wont need these anymore
+
+  
+ models$base=c(90000,250000,100000,160000) #Add baseline emissions here for convenience
+
+
+```
+
+```{r, echo=FALSE}
+models %>% 
+  select(campus,coeff) %>% 
+  kable(caption="Answers to 1")
+```
+
+
+```{r, eval=FALSE,class.source= 'fold-hide'}
+# Straightfoward way
+model_UCSB = lm(UCSB ~ 0 + Abatement,data=carbon_df)
+model_UCLA = lm(UCLA ~ 0 + Abatement,data=carbon_df)
+model_UCI = lm(UCI ~ 0 + Abatement,data=carbon_df)
+model_UCD = lm(UCD ~ 0 + Abatement,data=carbon_df)
+
+#Question 1
+a_UCSB = model_UCSB$coefficients
+a_UCLA = model_UCLA$coefficients
+a_UCI = model_UCI$coefficients
+a_UCD = model_UCD$coefficients
+
+B_UCSB = 90000
+B_UCLA = 250000
+B_UCI = 100000
+B_UCD = 160000
+```
+
+
+
+
+## Question 2
+
+Using your estimated marginal abatement cost curves, together with the baseline emissions, derive each campus’ *demand curve* for carbon. In other words, how much would each campus be willing to pay to emit the first ton of carbon, the second ton of carbon, etc.^[Hint: You can use this equation for the demand for emissions: $P(Emissions) = a*Baseline – a*Emissions$, where a is your estimated
+slope of the marginal cost curve.] Plot each campus’ demand curve for emissions on a single graph. Which campus is willing to pay the most for the first ton of carbon emissions?
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> First step is to make a demand function that takes our regression model inputs and returns the prices for any quantity of emissions. We can use the equation $P(e)=a*Baseline-a*E$, where a is the regression coefficient, Baseline is the current emissions in each campus, and emissions is the tons of carbon the campus releases. </span>
+
+<span style="color: blue;"> Next we create a sequence of emissions to make a demand curve for each campus. Remember to limit the price at 0 for each campus. Negative prices do not make conceptual sense here (or ever really). </span>
+
+
+```{r}
+# tidy way
+p=function(a,b,e){
+  a*b-a*e
+}
+
+tidy_df2<-models %>% 
+  rowwise() %>% # Like group_by but for rows
+  mutate(emissions=list(seq(0,250000,length.out=100))) %>% 
+  unnest_longer(emissions) %>%   # tidy way of adding a consistent vector to each grouped variables.
+  mutate(price=pmax(0,p(coeff,base,emissions)))  # apply function and choose 0 if our demand function goes negative.
+
+
+# plot with ggplot
+
+p2<-ggplot(tidy_df2,aes(x=emissions,y=price,color=campus))+
+  geom_line(linewidth=2)+
+  viridis::scale_color_viridis(discrete = TRUE, option = "D")+
+  theme_classic()
+
+p2
+
+```
+
+
+```{r, eval=FALSE,class.source= 'fold-hide'}
+#Straigtfoward
+
+#Question 2
+P_UCSB = function(E)
+{
+  P = a_UCSB*(B_UCSB - E)
+  return(P)
+}
+P_UCLA = function(E)
+{
+  P = a_UCLA*(B_UCLA - E)
+  return(P)
+}
+P_UCI = function(E)
+{
+  P = a_UCI*(B_UCI - E)
+  return(P)
+}
+P_UCD = function(E)
+{
+  P = a_UCD*(B_UCD - E)
+  return(P)
+}
+
+DF2 = data.frame(E=seq(0,250000,length.out=100)) %>%
+  mutate(price_UCSB = pmax(0,P_UCSB(E))) %>%
+  mutate(price_UCLA = pmax(0,P_UCLA(E))) %>%
+  mutate(price_UCI = pmax(0,P_UCI(E))) %>%
+  mutate(price_UCD = pmax(0,P_UCD(E))) 
+
+P2 = ggplot(data=DF2) +
+  geom_line(aes(x=E,y=price_UCSB),color="green") + 
+  geom_line(aes(x=E,y=price_UCLA),color="red") + 
+  geom_line(aes(x=E,y=price_UCI),color="orange") + 
+  geom_line(aes(x=E,y=price_UCD),color="blue") 
+P2
+
+```
+
+<span style="color: blue;"> UCD would pay the most (~$500) to emit the first ton of carbon. </span>
+
+## Question 3
+
+Here you will analyze three alternative interventions for reducing carbon emissions across these four campuses. Please answer the questions about each intervention listed below:
+
+### Intervention #1: Carbon Tax
+
+Each campus must pay a tax of $50/ton for each ton of emissions. How much would each campus choose to emit? How much would each campus abate? What is the total amount of emissions across all four campuses? How much tax revenue is generated?
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> Calculate the new emissions equilibrium with the tax. Rearrange the demand equation to solve for E. </span>
+
+\begin{equation}
+\begin{aligned}
+P=a(B-E) \\
+E=B-\frac{P}{a}
+\end{aligned}
+\end{equation}
+
+<span style="color: blue;"> Sub in the tax for P and use each campuses baseline and regression coefficients to get the emissions. </span>
+
+<span style="color: blue;"> Then find abatement by taking the difference from the baseline and the new emissions. Aggregate all the emissions by summing the emissions column since it has each campus in it. Total tax revenue is then total emissions times the tax. </span>
+
+```{r}
+# tidy way
+tax=50
+
+tidy_df3<-models %>% 
+  mutate(p=tax) %>% 
+  mutate(emissions=base-p/coeff) %>% 
+  mutate(abatement=base-emissions)
+
+total_e=sum(tidy_df3$emissions)
+
+tax_rev=round(total_e*tax,0)
+
+tidy_df3 %>% 
+  select(-c(base,coeff)) %>% 
+  kable(caption="Each campus emissions after $50 tax")
+```
+
+<span style="color: blue;"> Total emissions are 437,489 tons of carbon and tax revenue is $21,874,467.</span>
+
+
+```{r, eval=FALSE,,class.source= 'fold-hide'}
+DF3a = data.frame(P=50) %>%
+  mutate(Emissions_UCSB = B_UCSB - P/a_UCSB) %>%
+  mutate(Abatement_UCSB = B_UCSB - Emissions_UCSB) %>%
+  mutate(Emissions_UCLA = B_UCLA - P/a_UCLA) %>%
+  mutate(Abatement_UCLA = B_UCLA - Emissions_UCLA) %>%
+  mutate(Emissions_UCI = B_UCI - P/a_UCI) %>%
+  mutate(Abatement_UCI = B_UCI - Emissions_UCI) %>%
+  mutate(Emissions_UCD = B_UCD - P/a_UCD) %>%
+  mutate(Abatement_UCD = B_UCD - Emissions_UCD) %>%
+  mutate(Emissions_TOTAL = Emissions_UCSB + Emissions_UCLA + Emissions_UCI + Emissions_UCD) %>%
+  mutate(Tax_Revenue = Emissions_TOTAL*P)
+```
+
+
+### Intervention #2: Carbon Ban:
+
+Carbon emissions are banned at each campus. What is the total cost of this ban to each campus?
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> Solve for consumer surplus. Since the regression lines are linear we can use the area of the triangle underneath the curve. The height intercept is the regression coefficient times the base for each campus.  </span>
+
+```{r}
+tidy_df3b<-models %>% 
+  mutate(ban_e=0.5*base*(coeff*base)) # Triangle area
+
+
+```
+
+```{r, class.source= 'fold-hide'}
+tidy_df3b %>% 
+  select(campus,ban_e) %>% 
+  kable(caption="Answers to 3b")
+```
+
+
+
+
+```{r ,eval=FALSE,class.source= 'fold-hide'}
+#Straightforward
+
+DF3b = data.frame(Ban_UCSB = .5*B_UCSB*(a_UCSB*B_UCSB)) %>%
+  mutate(Ban_UCLA = .5*B_UCLA*(a_UCLA*B_UCLA)) %>%
+  mutate(Ban_UCI = .5*B_UCI*(a_UCI*B_UCI)) %>%
+  mutate(Ban_UCD = .5*B_UCD*(a_UCD*B_UCD))
+```
+
+
+### Intervention #3: Cap without Trade:
+
+Each campus is capped at 100,000 tons of carbon. How much abatement would be required by each campus to comply with this cap? What is the marginal cost of the last unit of abatement for each campus? What is the total cost of abatement for each campus to comply with this new cap?
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> Set the cap at 100,000 tons for each campus. Then find the difference between current levels and the cap. Some campuses you should notice won't have to abate anything like UCSB and UCI because they are already below the cap. </span>
+
+<span style="color: blue;"> Marginal cost of abatement is the price at the cap or zero if no abatement occurred. Use our demand function from before at the cap.</span>
+
+<span style="color: blue;"> Use the area of the triangle to get the total cost of abatement from the baseline to the new levels. </span>
+
+```{r}
+# tidy way
+
+tidy_df3c<-models %>% 
+  mutate(cap=100000) %>% 
+  mutate(abate=max(0,base-cap)) %>% 
+  mutate(mc=max(0,p(coeff,base,cap))) %>% 
+  mutate(tc=0.5*abate*(abate*coeff))  #Base times height/2
+
+```
+
+
+```{r, class.source= 'fold-hide'}
+tidy_df3c %>% 
+  select(campus,abate,mc,tc) %>% 
+  kable(caption="Answers to 3c")
+```
+
+
+```{r, eval=FALSE,class.source= 'fold-hide'}
+
+#straightforward
+
+DF3c = data.frame(Cap=100000) %>%
+  mutate(Abate_UCSB = max(0,B_UCSB-Cap)) %>%
+  mutate(Abate_UCLA = max(0,B_UCLA-Cap)) %>%
+  mutate(Abate_UCI = max(0,B_UCI-Cap)) %>%
+  mutate(Abate_UCD = max(0,B_UCD-Cap)) %>%
+  mutate(MC_UCSB = max(0,P_UCSB(Cap))) %>%
+  mutate(MC_UCLA = max(0,P_UCLA(Cap))) %>%
+  mutate(MC_UCI = max(0,P_UCI(Cap))) %>%
+  mutate(MC_UCD = max(0,P_UCD(Cap))) %>%
+  mutate(TC_UCSB = .5*Abate_UCSB^2*a_UCSB) %>%
+  mutate(TC_UCLA = .5*Abate_UCLA^2*a_UCLA) %>%
+  mutate(TC_UCI = .5*Abate_UCI^2*a_UCI) %>%
+  mutate(TC_UCD = .5*Abate_UCD^2*a_UCD) 
+```
+
+
+### Intervention #4: Cap with Trade:
+
+Suppose each campus is capped at 100,000 tons of carbon, but trade is allowed. With trade, total emissions will be 400,000 but some campuses may emit more or less than 100,000. How much would each campus end up emitting after trade? What is the equilibrium trading price of carbon permits? For each campus, calculate whether they are a buyer or a seller of permits.
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> I think it's easiest to think about each campus response to a price of carbon first then aggregate into the market to find the price. Create a sequence of prices from the highest marginal cost (UCD) to zero. At a price of zero, all campus will emit their baseline, but as the price increases they will be less willing to emit as it is more costly. Use the inverse demand equation from 3a to get each campuses emissions. </span>
+
+<span style="color: blue;"> Now for each price, aggregate the emissions for all campuses. </span>
+
+<span style="color: blue;"> The cap restricts total emissions to 400,000. Our new dataframe has the market price for any given level of emissions. Use a spline technique to get the trading price for all campuses. A spline interpolates between two points to return the best approximate answer of price. The $y term at the end of spline tells the function to only return the variable of interest, which is price. Alternatively, invert the demand equation to solve quantity for any price on each campus. Then sum up and find the P that gives 400,000. Spline is one line and gives you exposure to another useful function. </span>
+
+```{r}
+trade_e<-models %>% 
+  rowwise() %>% 
+  mutate(price = list(seq(0, 500,length.out=100))) %>% 
+  unnest_longer(price) %>% 
+  mutate(emissions=pmax(0,base-price/coeff)) 
+
+e_agg<-trade_e%>% 
+  group_by(price) %>% 
+  summarize(emissions=sum(emissions),
+            campus="total")
+
+cap=4e5
+
+pstar=spline(x=e_agg$emissions,y=e_agg$price,xout=cap)$y
+
+## plot total market
+
+# combine agg
+market_p<-trade_e %>% 
+  select(campus,emissions,price) %>% 
+  rbind(e_agg) %>% 
+  ggplot(aes(x=emissions,y=price,color=campus))+
+  geom_line(size=2)+
+  viridis::scale_color_viridis(discrete = TRUE, option = "D")+
+  theme_classic()+
+  annotate("text",x=cap,y=125,label="Trading Price")+
+  annotate("pointrange",x=cap,y=pstar,xmin=0,xmax=cap,color="red",size=2,linewidth=1.5)
+
+market_p
+
+
+```
+
+
+<span style="color: blue;"> To determine buyers and sellers, find the emissions amount at the market price for each campus. If it is lower then campus cap of 100,000 they are permit sellers, and if higher they are buyers. Can be done approximately by hand, but I'll use a spline to show how it can be done exactly. </span>
+
+```{r}
+
+my_spline<-function(df,pstar){
+  
+  spline(x=df$price,y=df$emissions,xout=pstar)$y
+} # easier to pass in all the data in the spline function then map2 so let's make a function that does exactly what I want.
+
+campus_cap=100000
+
+campus_bs<-trade_e %>% 
+  nest(!campus) %>% 
+  mutate(estar=map_dbl(data,~my_spline(.x,pstar))) %>% 
+  select(-data) %>% 
+  mutate(diff=estar-campus_cap) %>% 
+  mutate(label=case_when(diff>0 ~"Buyer",
+                   diff<0~"Seller"))
+
+```
+
+```{r, echo=FALSE}
+campus_bs %>% 
+  kable(caption="Answers to 3d: Buyers and Sellers at market price of $61.53 capped at 400,000 tons")
+```
+
+
+```{r, eval=FALSE,class.source= 'fold-hide'}
+
+#straightfoward
+DF2new = data.frame(P=seq(0,500,length.out=100)) %>%
+  mutate(E_UCSB = pmax(0,B_UCSB - P/a_UCSB)) %>%
+  mutate(E_UCLA = pmax(0,B_UCLA - P/a_UCLA)) %>%
+  mutate(E_UCI = pmax(0,B_UCI - P/a_UCI)) %>%
+  mutate(E_UCD = pmax(0,B_UCD - P/a_UCD)) %>%
+  mutate(E_Agg = E_UCSB+E_UCLA+E_UCI+E_UCD)
+
+
+Pstar = spline(x=DF2new$E_Agg,y=DF2new$P,xout=4e5)$y
+
+P3d = ggplot(data=DF2new) +
+  geom_line(aes(x=E_UCSB,y=P),color="green") + 
+  geom_line(aes(x=E_UCLA,y=P),color="red") + 
+  geom_line(aes(x=E_UCI,y=P),color="orange") + 
+  geom_line(aes(x=E_UCD,y=P),color="blue") +
+  geom_line(aes(x=E_Agg,y=P),color="purple",size=2) +
+  geom_segment(aes(x=0,xend=4e5,y=Pstar,yend=Pstar),size=2)
+P3d
+
+DF3d = data.frame(P=Pstar) %>%
+  mutate(E_UCSB = pmax(0,B_UCSB - P/a_UCSB)) %>%
+  mutate(E_UCLA = pmax(0,B_UCLA - P/a_UCLA)) %>%
+  mutate(E_UCI = pmax(0,B_UCI - P/a_UCI)) %>%
+  mutate(E_UCD = pmax(0,B_UCD - P/a_UCD)) %>%
+  mutate(E_Agg = E_UCSB+E_UCLA+E_UCI+E_UCD)
+```
+
+
+## Question 4
+
+The central campus decides to go with the “Cap with Trade” approach (Scenario 3d above). An altruistic philanthropist buys 50,000 of the permits from the cap and trade market and retires them (i.e. not emit the carbon), so only 350,000 tons will be emitted. What is the new trading price among the four campuses? How much will it cost the philanthropist to buy and retire these permits?
+
+<span style="color: blue;"> **Solution** </span>
+
+<span style="color: blue;"> Use the aggregate market data to find the new price when the cap is dropped to 350,000 tons. Same calculation as before, but now at 350,000 instead of 400,000. </span>
+
+
+```{r}
+cap_invest=350000
+
+pstar_invest=spline(x=e_agg$emissions,y=e_agg$price,xout=cap_invest)$y
+```
+
+<span style="color: blue;"> The new trading price comes out to $76.91 dollars. </span>
+
+<span style="color: blue;"> The philanthropist would spend $76.91 x 50,000 (\$3,845,500) to retire the permits.  </span>

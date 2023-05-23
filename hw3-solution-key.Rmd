@@ -1,0 +1,413 @@
+---
+title: "ESM 204 Homework 3 Answer Key"
+author: "Nathaniel Grimes"
+date: "2023-05-12"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE)
+
+library(tidyverse)
+library(knitr)
+```
+
+```{r}
+demand<-read_csv("hw3.csv") %>% 
+  janitor::clean_names()
+
+demand_tidy<-demand %>% 
+  pivot_longer(!price_dollars,names_to = "group",values_to = "demand")
+```
+
+## Question 1)
+
+The data set HW3 data.csv provides price (in $) and quantity (in number of EVs) estimates of demand per year for both DAC and non-DAC groups. Run linear regressions (with an intercept) to estimate the demand curves for DAC and non-DAC consumers. What are 2-3 reasons you can think that may explain the differences in demand you estimate?
+
+
+<span style="color: blue;">
+First let's plot the data to see what it looks like.</span>
+
+```{r}
+ggplot(demand_tidy)+
+  geom_point(aes(x=demand,y=price_dollars,color=group),size=2)+
+  scale_color_manual(values=c("#FFB814","#004D9F"))+
+  theme_classic()
+```
+
+<span style="color: blue;">
+Clearly there is a distinct separation between the two groups, which ought to be reflected in our regressions. </span>
+
+<span style="color: blue;">
+Next run regressions for both groups. Note these can be done individually or through a tidy way. I copied the code from last homework with a few tweaks in names for this one. The simplicity shows why tidy formats are very useful. Just make sure you store the coefficients from each regression somehow. I used a dataframe that I can access at anytime, you may have created a variable for each one from the model outputs. </span>
+
+```{r}
+models<-demand_tidy %>% 
+  group_by(group) %>% 
+  nest() %>% 
+  mutate(reg=map(.x=data,~lm(price_dollars~demand,data=.x))) %>% 
+  mutate(coeff=map(reg,coefficients)) %>% 
+  unnest_wider(coeff) %>% 
+  select(-c(reg,data)) %>% 
+  rename(c(a='(Intercept)',b='demand'))  #Change names because I don't like intercept and demand as column names.
+```
+
+
+```{r}
+# Make a table
+
+models %>% 
+  kable(col.names = c("Group","Intercept","$\\beta$"),
+        caption="Regression coefficients for each group",
+        format.args = list(big.mark = ","),
+        escape=FALSE)
+
+```
+
+<span style="color: blue;">
+EVs still might be luxury goods where people with higher incomes are more willing to purchase items. Infrastructure limitations (you try charging an EV when you only have street parking in SB). Etc. </span>
+
+
+## Question 2
+
+One kilogram (kg) of lithium is estimated to cause $300 dollars worth of damage in health costs to local communities living near mines. Each EV requires a lithium ion battery containing 63kg of lithium. Assuming there are no other externalities caused by EV production, what is the marginal externality cost per EV produced?
+
+```{r}
+mec=300*63
+```
+
+<span style="color: blue;">
+Multiply the per kilogram damage by 63 for each car to get a constant marginal external cost. Each EV's battery causes $`r round(mec,-3)` worth of damage.</span>
+
+## Question 3
+
+What is the aggregate annual demand curve for EVs? What is the supply curve for EVs? What is the “benefit” to consumers under the status quo? What is the “benefit” to producers under the status quo? What is the environmental cost under the status quo?
+
+<span style="color: blue;">
+Aggregate the demand functions together. Because we're doing some calculations in the future, let's make some functions for each demand and the aggregate. First step is to convert our demand equations into inverse demand curves as functions of price. For both equations the general format will be:</span>
+
+\begin{equation}
+\begin{aligned}
+P&=a-bQ \\
+Q&=\frac{P-a}{b} &\text{Rearrange and solve for Q}
+\end{aligned}
+\end{equation}
+
+<span style="color: blue;">
+Then we can aggregate demand easily by adding both curves for any given price. There will be a kink because of the different y-intercepts so we need to put some restrictions on the equations when coded in R. That's most easily handled with an ifelse statement making sure each formula doesn't fall below 0 (pmax and max also work too).</span>
+
+\begin{equation}
+Q_{agg}(P)=Q_{dac}(P)+Q_{non-dac}(P)
+\end{equation}
+
+<span style="color: blue;">
+Aggregating by hand with the calculated coefficients should yield the following piece wise aggregate demand function:
+
+$$
+\begin{align}
+Q_{agg}(P) &= 57867-0.366P\quad if\;P>116854 \\
+&=75543-0.516P\quad if \;P\leq 116854
+\end{align}
+$$
+
+$$
+\begin{align}
+Supply(P) &= P
+\end{align}
+$$
+
+<span style="color: blue;">
+Then find the market equilibrium at the given market price. We can get the supply curve by taking the slope of a line that passes through the equilibrium because we know the supply curve starts at zero, intersects the equilibrium at $Q^*$ and $P^*$, and is linear.</span>
+
+
+```{r}
+#Demand equation
+demand<-function(p,a,b){
+  q<-(p-a)/b
+  
+  q<-ifelse(q<0,0,q)
+  
+  return(q)
+}
+
+demand_agg<-function(p){
+  q<-demand(p,models$a[1],models$b[1])+demand(p,models$a[2],models$b[2])
+  
+  return(q)
+}
+
+```
+
+<span style="color: blue;">
+This makes calculating consumer surplus much easier sense we can apply the triangle area derivation and add up each consumer surplus by group.</span>
+
+```{r}
+cs<-function(p,a,b){
+  q<-demand(p,a,b)
+  surplus=0.5*(a-p)*q
+  
+  return(surplus)
+}
+
+cs_agg<-function(p){
+  surplus=cs(p,models$a[1],models$b[1])+cs(p,models$a[2],models$b[2])
+  
+  return(surplus)
+}
+```
+
+<span style="color: blue;">
+We can back track out the private supply curve with the information given in the problem. It is linear with an intercept at the origin (0,0) and must pass through the equilibrium price ($50,000) and quantity (). With this information we can find the slope of the supply curve and make a function that returns the quantity supplied for any price, and the inverse.</span>
+
+```{r}
+eq_price=50000
+
+#Slope of the supply curve
+mpc_slope=eq_price/demand_agg(eq_price)
+
+#Inverse supply curve
+mpc<-function(q){
+  p<-mpc_slope*q
+  
+  return(p)
+}
+
+i_mpc<-function(p,mec){
+  q<-(p-mec)/mpc_slope
+  
+  return(q)
+}
+
+#Producer surplus
+ps<-function(q){
+  p<-mpc(q)
+  surplus<-0.5*p*q
+  return(surplus)
+}
+
+```
+
+<span style="color: blue;">
+Last step is to get the total environmental cost for any policy. We can take the constant marginal cost we calculated in 2 and multiply it for any quantity of electric vehicles produced. We're going to change the potential damages later in the question so I went ahead and included it here as an input. </span>
+
+```{r}
+tec<-function(damage,q){
+  cost=damage*63*q
+  
+  return(cost)
+}
+```
+
+<span style="color: blue;">
+Run all the functions with the necessary parameters to calculate all that is asked in the question. </span>
+
+```{r}
+round(data.frame(cs=cs_agg(eq_price),ps=ps(demand_agg(eq_price)),env=tec(300,demand_agg(eq_price))),-4) %>% 
+  kable(col.names = c("Consumer Surplus","Producer Surplus","Total Environmental Damages"),
+        caption="Question 3 answers",
+        format.args = list(big.mark = ","))
+```
+
+<span style="color: blue;">
+Here's a plot to show the aggregate demand, supply curve, and initial equilibrium with producer and consumer surpluses. </span>
+
+```{r}
+agg<-models %>% 
+  rowwise() %>% 
+  mutate(price = list(seq(0, 160000,by=2000))) %>% 
+  unnest_longer(price) %>% 
+  mutate(q=pmax(0,(price-a)/b))
+
+d_agg<-agg%>% 
+  group_by(price) %>% 
+  summarize(q=sum(q),
+            group="total")
+
+eq_price=50000
+
+qstar=d_agg %>% 
+  filter(price==eq_price)
+
+supply=data.frame(price=seq(0, 100000,by=2000),group="supply") %>% 
+  mutate(q=i_mpc(price,mec =0))
+```
+
+
+
+```{r}
+# Plot them
+agg %>% 
+  select(price,q,group) %>% 
+  rbind(d_agg) %>% 
+  rbind(supply) %>% 
+  ggplot()+
+  annotate("polygon",x=c(0,0,qstar$q),y=c(0,50000,50000),fill="blue",alpha=0.5)+
+  annotate("polygon",x=c(0,0,demand(models$a[1],models$a[2],models$b[2]),qstar$q),y=c(50000,models$a[2],models$a[1],50000),fill="lightgreen",alpha=0.5)+
+  geom_line(aes(x=q,y=price,color=group),linewidth=2)+
+  viridis::scale_color_viridis(discrete = TRUE, option = "D")+
+  scale_y_continuous(expand=c(0,0))+
+  scale_x_continuous(expand=c(0,0))+
+  labs(x="quantity",y="price")+
+  theme_classic()+
+  annotate("text",x=qstar$q,y=eq_price+19000,label="Equilibirum")+
+  annotate("pointrange",x=qstar$q,y=eq_price,xmin=0,xmax=qstar$q,color="red",size=2,linewidth=1.5)+
+  annotate("pointrange",x=qstar$q,y=eq_price,ymin=0,ymax=eq_price,color="red",size=2,linewidth=1.5)+
+  annotate("label",x=15000,y=80000,label="Consumer Surplus",color="green")+
+  annotate("label",x=15000,y=37000,label="Producer Surplus",color="blue")
+
+
+```
+
+
+## Question 4
+
+How is the current consumer benefit divided between DAC and non-DAC consumers?
+
+<span style="color: blue;">
+Apply the consumer surplus functions to each demand curve. </span>
+
+```{r}
+dac_cs<-cs(eq_price,models$a[1],models$b[1])
+
+no_dac_cs<-cs(eq_price,models$a[2],models$b[2])
+
+kable(round(cbind(dac_cs,no_dac_cs),-4),
+      col.names = c("DAC Consumer Surplus","non-DAC Consumer Surplus"),
+        caption="Question 4 answers",
+        format.args = list(big.mark = ","))
+
+```
+
+
+
+
+## Question 5
+
+Derive the optimal EV tax (in $ per vehicle) to internalize the lithium mining externality. Noting that recent research has shown that DACs are far more likely to contain mining activity, assume that the mining externality is borne entirely by the DAC group. What would be the effects of this tax on:
+
+### a)
+
+<span style="color: blue;">
+The optimal tax to correct the external damage is exactly equal to the marginal external cost so the $\tau=MEC$. We can add this to the producers supply curve by shifting up the price by this amount for every quantity supplied. Then we can find the equilibrium by setting the aggregate demand curve equal to the shifted marginal social cost curve.</span>
+
+```{r}
+equi_p<-function(p,mec){
+  i_mpc(p,mec*63)-demand_agg(p)
+}
+
+p_range = c(0,100000)
+
+p_tax=uniroot(equi_p,p_range,mec=300)$root
+
+```
+
+
+<span style="color: blue;">
+The optimal tax creates a new market equilibrium price where consumers pay $`r signif(p_tax,2)`. </span>
+
+### b)
+<span style="color: blue;">
+Plug the new price back into our aggregate demand equation and the equilibrium quantity of EV's in California drops to 43,241.</span>
+
+```{r}
+q_tax=demand_agg(p_tax)
+```
+
+
+### c, d, e, f, and g)
+
+<span style="color: blue;">
+Use our functions to find the welfare of each group and the producers. But notice that the environmental damage is borne solely on the DAC communities. Therefore, their total welfare has to include the consumer surplus of the vehicles they purchase, but also the negative effects of the environment damage of *ALL* EVs. So it makes more sense to get the environmental damage first and then subtract the consumer surplus for overall welfare. </span>
+
+```{r}
+envcost=tec(300,q_tax)
+
+dac_welfare<-cs(p_tax,models$a[1],models$b[1])-envcost
+
+no_dac_welfare<-cs(p_tax,models$a[2],models$b[2])
+
+psurplus=ps(q_tax)
+
+ 
+revenue=mec*q_tax
+```
+
+
+```{r}
+#Make a table
+
+round(data.frame(dac_welfare,no_dac_welfare,psurplus,envcost,revenue),-4) %>% 
+  kable(col.names = c("DAC Welfare","Non DAC Welfare","Producer Surplus","Environmental Damages","Tax Revenue"),
+        caption="Question 5 answers",
+        format.args = list(big.mark = ","))
+  
+```
+
+
+## Question 6)
+
+Now, assume that all revenue from the EV tax will be redistributed to the consumers in proportion to their pre-tax consumption. For example, if 80% of the EVs were consumed by non-DAC consumers, then they get 80% of the tax revenue. Additionally, consider that emerging scientific evidence suggests the true environmental damages from lithium mining may be much higher than \$300. For a range of values of external costs per kg of lithium (\$350, \$400, \$450, and \$500 per kg), calculate the effects of an EV tax on
+
+<span style="color: blue;">
+First find the initial proportional split. Divide the group consumption by the total amount of aggregate quantity.</span>
+
+```{r}
+prop_dac=demand(eq_price,models$a[1],models$b[1])/demand_agg(eq_price)
+
+prop_no_dac=demand(eq_price,models$a[2],models$b[2])/demand_agg(eq_price)
+
+```
+
+
+<span style="color: blue;">
+We will use these proportions to distribute the revenues to compensate for welfare loss. The total welfare for each group will thus be the consumer surplus, the taxes gained, and the suffered environmental damages (negative). I designed the marginal social cost curve to change with new information on the marginal damages. We can use a `purrr::map()` to quickly iterate over all the given external costs of lithium. Then our predefined functions for producer and consumer surplus already accept vectors in price to return vectors of surplus. Therefore, we can just pass the found social quantities and prices to each. </span>
+
+```{r}
+lithium=seq(300,500,by=50)
+
+tax_vec=map(.x=lithium,~uniroot(equi_p,p_range,mec=.x)$root) %>% 
+  unlist() %>% 
+  round(-3)
+
+q_vec=round(demand_agg(tax_vec),-3)
+
+env_vec=round(tec(lithium,q_vec),-4)
+
+tax_rev=round(q_vec*lithium*63,-4)
+
+dac_welfare_vec=round(cs(tax_vec,models$a[1],models$b[1])-env_vec+tax_rev*prop_dac,-4)
+
+dac_no_vec=round(cs(tax_vec,models$a[2],models$b[2])+tax_rev*prop_no_dac,-4)
+
+ps_vec=round(ps(q_vec),-4)
+
+```
+
+```{r}
+#Put it all together in a table
+
+data.frame(lithium,tax_vec,q_vec,env_vec,tax_rev,dac_welfare_vec,dac_no_vec,ps_vec) %>%  kable(col.names = c("External Cost of Lithium","Equilibrium Price","Equilibrium Quantity","Environmental Damages","Tax Revenue","DAC Welfare","Non DAC Welfare","Producer Surplus"),
+        caption="Question 6 answers",
+        format.args = list(big.mark = ","))
+```
+
+## Question 7)
+
+### a)
+
+<span style="color: blue;">
+The optimal EV tax will lower if damages from gasoline cars are also considered. The marginal social cost curve of having an electric vehicle will shift to the right as the EV substitute for polluting gasoline cars. The shift in the marginal social cost comes from the opportunity cost of having a gasoline car on the road relative to the damages from lithium mining. </span>
+
+### b)
+
+<span style="color: blue;">
+Non-DAC consumers prefer the new tax. They will increase their consumer surplus with a reduced tax in the electric vehicle market, and they do not suffer environmental damages from climate change. </span>
+
+### c) 
+
+Assuming tax revenue does not get returned to consumers, are DAC consumers more or less likely to support this new tax, relative to the tax that only accounts for the mining externality? Why?
+
+<span style="color: blue;">
+DAC consumers would prefer the mining tax, but it depends on the proportion of damages from climate change relative to damages they suffer from mining. Since mining environmental costs are borne solely by DAC consumers, most likely they will experience greater damages from mining than climate change. Thus they would prefer a tax that reduces the amount of EVs to help their community. </span>
