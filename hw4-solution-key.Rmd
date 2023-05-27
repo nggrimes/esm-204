@@ -1,0 +1,223 @@
+---
+title: "hw4-solution-key"
+author: "Nathaniel Grimes"
+date: "2023-05-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r setup, echo = FALSE, message = FALSE, warning = FALSE}
+
+knitr::opts_chunk$set(fig.width = 6, fig.height = 4, 
+                      echo = TRUE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(readr)
+library(cowplot)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(rootSolve)
+library(janitor)
+library(stargazer)
+
+
+#devtools::install_github('rstudio/rmarkdown')
+options(scipen=999) # not scientific notation
+
+
+```
+
+# Estimated damage function
+
+The following code estimates our quadratic damage function while omitting the intercept term 
+
+
+```{r , include=TRUE}
+
+## Load damage data and create the squared warming variable
+damages_data <- read_csv("damages.csv") %>%
+  clean_names()%>%
+  mutate(warming2 = warming^2)
+
+## Load climate trajectories
+warming_data <- read_csv("warming.csv")%>%
+  clean_names()
+
+## Question 1
+model_1 <- lm(damages ~ warming + warming2 -1, data = damages_data)
+
+## Add fitted data 
+damages_fitted = model_1$model %>%
+  mutate(fitted=model_1$fitted.values) 
+
+## Plot raw and fitted data
+plot_1 <- ggplot(data=damages_fitted) + 
+  geom_point(aes(x=warming,y=damages/1E12),color="red",alpha=.5) +
+  geom_line(aes(x=warming,y=fitted/1E12),size=2)+
+  theme_cowplot(14)+
+  labs(x = "Warming (degrees C)", y = "Damages (trillions of dollars)")
+
+```
+
+<center>**Figure 1: Estimated quadratic damage function**</center>
+```{r , fig.width = 5, fig.height = 4, eval=TRUE, echo=FALSE}
+plot_1
+```
+
+# Predicting damages of warming scenarios
+```{r , include=TRUE}
+
+## Saving quadratic coefficients 
+b_1 = model_1$coefficients[[1]]
+b_2 = model_1$coefficients[[2]]
+
+## Define pulse
+pulse <- 35E9
+
+## Predict damages 
+warming_damages <- warming_data %>%
+  mutate(damage_nopulse = b_1*warming_baseline + b_2*warming_baseline^2) %>%
+  mutate(damage_pulse = b_1*warming_pulse + b_2*warming_pulse^2) %>%
+  mutate(damage_diff = damage_pulse - damage_nopulse) %>%
+  mutate(damage_diff_perton = damage_diff/pulse)
+
+P2a <- ggplot(data=warming_damages) +
+  geom_line(aes(x=year,y=damage_nopulse/1E12))+
+  theme_cowplot(14)+
+  labs(x = "Year", y = "Trillions of $", title = "A. Damages, no pulse")
+P2b <- ggplot(data=warming_damages) +
+  geom_line(aes(x=year,y=damage_pulse/1E12))+
+  theme_cowplot(14)+
+  labs(x = "Year", y = "Trillions of $", title = "B. Damages,  pulse")
+P2c <- ggplot(data=warming_damages) +
+  geom_line(aes(x=year,y=damage_diff/1E9))+
+  theme_cowplot(14)+
+  labs(x = "Year", y = "Billions of $", title = "C. Damage differences")
+P2d <- ggplot(data=warming_damages) +
+  geom_line(aes(x=year,y=damage_diff_perton))+
+  theme_cowplot(14)+
+  labs(x = "Year", y = "$ per ton", title = "D. Differences per ton")
+
+grid.arrange(P2a, P2b, P2c, P2d, ncol=2, top ="Figure 2: Predicted damages")
+
+```
+
+# The social cost of carbon by discount rates
+
+```{r , include=TRUE}
+
+## Generate a range of discount rates 
+# I look at discount rates from 0 to 5%
+
+r <-  seq(0.01,.08,0.01)
+
+a<-function(x){
+  pv_out=warming_damages %>% 
+    mutate(t=year-2021) %>% 
+    mutate(PVdiff_perton=damage_diff_perton/(1+x)^t) %>% #Discount
+    summarise(ssc=sum(PVdiff_perton),r=x) #Sum up
+return(pv_out)
+} 
+
+
+
+## PV of damage differences per ton for different discount rates 
+damages_PV <- lapply(1:length(r), function(x) 
+  bind_cols(r= r[x], 
+            PVdiff_perton = warming_damages$damage_diff_perton/(1+r[x])^(warming_damages$year-2021),
+            year = warming_damages$year))%>%
+  bind_rows()
+
+## Summing the PVs per discount rate to get SCC
+
+SCC <- damages_PV %>%
+  group_by(r)%>%
+  summarise(SCC = sum(PVdiff_perton))
+
+## Ramsey rule discount rate
+
+r_ramsey <- 0.001 + 2*0.01
+
+plot_3 <- ggplot(data=SCC) +
+  geom_line(aes(x=r,y=SCC),size=2)+
+  theme_cowplot(14)+
+  labs(x = "Discount rate", y = "Social cost of carbon ($ per ton)")+ 
+  geom_vline(xintercept = r_ramsey, color="red") 
+
+```
+
+<center>**Figure 3: Social cost of carbon by discount rates **</center>
+```{r , fig.width = 5, fig.height = 4, eval=TRUE, echo=FALSE}
+plot_3
+```
+
+
+# The SCC under Ramsey Rule
+
+The red line in Figure 3 shows the SCC of around $\$71$ at the Ramsey rule discount rate of 2.1\%.
+
+
+
+# Decision making under uncertainty
+
+```{r, include=TRUE}
+
+# PV of damages under different policies and scenarios
+policy_damages <- damages_PV %>%
+  filter(r==0.02) %>%
+  left_join(warming_data %>% select(year, warm_A1=warming_baseline), by= c("year"="year"))%>%
+  mutate(warm_A2=1.5*warm_A1) %>%
+  mutate(warm_Ba=warm_A1) %>%
+  mutate(warm_Bb=1.29) %>%
+  mutate(warm_B=pmin(warm_Ba,warm_Bb)) %>%
+  mutate(damage_A1=(b_1*warm_A1 + b_2*warm_A1^2)/((1+0.02)^(year-2022))) %>%
+  mutate(damage_A2=(b_1*warm_A2 + b_2*warm_A2^2)/((1+0.02)^(year-2022))) %>%
+  mutate(damage_B=(b_1*warm_B + b_2*warm_B^2)/((1+0.02)^(year-2022))) 
+
+# Sum of PV of damages between both policies
+expected_value_A = .5*sum(policy_damages$damage_A1) + .5*sum(policy_damages$damage_A2)
+value_B = sum(policy_damages$damage_B)
+
+```
+
+The expected present value of damages under Policy A are of \$`r format(round(expected_value_A/1E12), big.mark=",")` trillions. The expected present value of damages under Policy B are of \$`r format(round(value_B/1E12), big.mark=",")` trillions.
+
+When society is risk neutral, we know society's utility function $U(m)$ (I use $m$ to denote money as the parameter in the utility function) is linear, and that $E(U(m)) = U(E(m))$. In the case of the random outcome of Policy A, $A$, $E(U(A)) = U(E(A)) = U(-\$3,023)$. For the certain outcome of Policy B, $B$, $U(B) = U(-\$787 - X)$, were $X$ is the policy cost. 
+
+```{r}
+# Let's look at the cost of the policy from 0 to 5000 trillion
+x= seq(0, 5000, length.out = 100)
+
+cost_scenario = tibble(X=x, cost_b = 787+x, cost_a=3023)
+
+plot_4 <- ggplot(cost_scenario, aes(X, y=cost_b)) +
+  geom_line() +
+  geom_hline(yintercept = 3023, color = 'mistyrose4')  +
+  theme_cowplot() +
+  geom_text(data = tibble(X=c(3500, 3500), cost_b = c(3200, 5200), 
+                          policy = c('Policy B','Policy A')), aes(label = policy)) +
+  labs(y = 'Expected PV damage $ (trillions)', x= 'X ($)')
+```
+
+
+
+Suppose the cost were zero or $X=0$, then we know that a risk neutral society would prefer Policy B since $E(U(A)) = U(E(A)) = U(-\$3,023)<U(B) = U(-\$787)$. We know this since $U(m)$ is increasing in $w$, utility is always increasing in \$.
+
+
+
+<center>**Figure 4: Total expected cost of policy A and B under a range of policy B cost, X. **</center>
+```{r , fig.width = 5, fig.height = 4, eval=TRUE, echo=FALSE}
+plot_4
+```
+
+
+
+Society will prefer Policy B until $-\$3,023 = -\$787 - X$ or $X = \$2,236$.
+
+
+# Risk averse society
+
+If society is risk averse, then $E(U(m)) < U(E(m))$. This implies that when $X=\$2,236$, E(U(A))< U(E(A)) = U(B). Therefore, since E(U(A))<U(B) when $X=\$2301$, we can say that when society is risk averse, they would still prefer Policy B to A for costs greater than \$2,236. However, we cannot put an upper bound on those costs, since we would need to know more about the functional form of $U(m)$. 
