@@ -2,12 +2,10 @@
 title: "hw4-solution-key"
 author: "Nathaniel Grimes"
 date: "2023-05-26"
-output: html_document
+output: 
+  html_document:
+    code_folding: show
 ---
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
 
 ``` {r setup, echo = FALSE, message = FALSE, warning = FALSE}
 
@@ -114,14 +112,11 @@ grid.arrange(P2a, P2b, P2c, P2d, ncol=2, top ="Figure 2: Predicted damages")
 
 r <-  seq(0.01,.08,0.01)
 
-a<-function(x){
-  pv_out=warming_damages %>% 
-    mutate(t=year-2021) %>% 
-    mutate(PVdiff_perton=damage_diff_perton/(1+x)^t) %>% #Discount
-    summarise(ssc=sum(PVdiff_perton),r=x) #Sum up
-return(pv_out)
-} 
-
+ssc<-purrr::map(r,\(x) warming_damages %>% 
+                     mutate(t=year-2021) %>% 
+                     mutate(PVdiff_perton=damage_diff_perton/(1+x)^t) %>% #Discount
+                      summarise(ssc=sum(PVdiff_perton),r=x) ) %>% 
+             purrr::list_rbind()
 
 
 ## PV of damage differences per ton for different discount rates 
@@ -173,9 +168,9 @@ policy_damages <- damages_PV %>%
   mutate(warm_Ba=warm_A1) %>%
   mutate(warm_Bb=1.29) %>%
   mutate(warm_B=pmin(warm_Ba,warm_Bb)) %>%
-  mutate(damage_A1=(b_1*warm_A1 + b_2*warm_A1^2)/((1+0.02)^(year-2022))) %>%
-  mutate(damage_A2=(b_1*warm_A2 + b_2*warm_A2^2)/((1+0.02)^(year-2022))) %>%
-  mutate(damage_B=(b_1*warm_B + b_2*warm_B^2)/((1+0.02)^(year-2022))) 
+  mutate(damage_A1=(b_1*warm_A1 + b_2*warm_A1^2)/((1+0.02)^(year-2021))) %>%
+  mutate(damage_A2=(b_1*warm_A2 + b_2*warm_A2^2)/((1+0.02)^(year-2021))) %>%
+  mutate(damage_B=(b_1*warm_B + b_2*warm_B^2)/((1+0.02)^(year-2021))) 
 
 # Sum of PV of damages between both policies
 expected_value_A = .5*sum(policy_damages$damage_A1) + .5*sum(policy_damages$damage_A2)
@@ -191,11 +186,11 @@ When society is risk neutral, we know society's utility function $U(m)$ (I use $
 # Let's look at the cost of the policy from 0 to 5000 trillion
 x= seq(0, 5000, length.out = 100)
 
-cost_scenario = tibble(X=x, cost_b = 787+x, cost_a=3023)
+cost_scenario = tibble(X=x, cost_b = 1620+x, cost_a=6314)
 
 plot_4 <- ggplot(cost_scenario, aes(X, y=cost_b)) +
   geom_line() +
-  geom_hline(yintercept = 3023, color = 'mistyrose4')  +
+  geom_hline(yintercept = 6314, color = 'mistyrose4')  +
   theme_cowplot() +
   geom_text(data = tibble(X=c(3500, 3500), cost_b = c(3200, 5200), 
                           policy = c('Policy B','Policy A')), aes(label = policy)) +
